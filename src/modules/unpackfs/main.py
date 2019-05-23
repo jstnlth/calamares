@@ -24,6 +24,7 @@
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -343,9 +344,33 @@ def run():
         destination = os.path.abspath(root_mount_point + entry["destination"])
 
         if not os.path.exists(source):
-            utils.warning("The source filesystem \"{}\" does not exist".format(source))
-            return (_("Bad unsquash configuration"),
-                    _("The source filesystem \"{}\" does not exist").format(source))
+            # Since the hard-coded path is wrong, try the live boot path as a fallback (multiboot USB support)
+            if "liveImageFallback_mount" in job.configuration:
+                mediapath = job.configuration['liveImageFallback_mount']
+                imagefile = os.path.basename(source)
+                PATH_PROCCMDLINE = '/proc/cmdline'
+                if os.path.isfile(PATH_PROCCMDLINE) and os.access(PATH_PROCCMDLINE, os.R_OK):
+                    with open(PATH_PROCCMDLINE, 'r') as cmdline:
+                        #use shlex.split to preserve spaces in quoted strings
+                        for arg in shlex.split(cmdline.read()):
+                            livepath = ""
+                            if re.search('^live-media-path=.+|^boot-path=.+', arg): #Debian
+                                livepath = os.path.relpath(arg.split('=')[1], os.sep)
+                            if re.search('^misobasedir=.+', arg): #Manjaro
+                                livepath = os.path.relpath(arg.split('=')[1], os.sep)
+                            if re.search('^kdeosisobasedir=.+', arg): #KaOS
+                                livepath = os.path.relpath(arg.split('=')[1], os.sep)
+                            if livepath != "" and mediapath != "":
+                                for base, subdirs, names in os.walk(os.path.join(mediapath, livepath)):
+                                    if imagefile in names:
+                                        utils.debug("The source filesystem \"{}\" does not exist".format(source))
+                                        source = os.path.join(base, imagefile)
+                                        utils.debug("Trying alternate filesystem \"{}\"".format(source))
+                                        break
+            if not os.path.exists(source):
+                utils.warning("The source filesystem \"{}\" does not exist".format(source))
+                return (_("Bad unsquash configuration"),
+                        _("The source filesystem \"{}\" does not exist").format(source))
 
         if not os.path.isdir(destination):
             utils.warning(("The destination \"{}\" in the target system is not a directory").format(destination))
